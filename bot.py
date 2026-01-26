@@ -1,111 +1,86 @@
-import os
-import logging
-import random
-import string
-from dotenv import load_dotenv
-from pyrogram import Client, filters, enums
-from pyrogram.errors import UserNotParticipant
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery
-from pymongo import MongoClient
-from flask import Flask # <-- Yahan add kiya hai
-from threading import Thread # <-- Yahan add kiya hai
+import sqlite3
+from pyrogram import Client, filters
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# --- Flask Web Server (Render ko busy rakhne ke liye) ---
-flask_app = Flask(__name__)
+# --- APNI DETAILS YAHAN BHAREIN ---
+API_ID = 31567540               
+API_HASH = "92b533d7cf66bf9096b738d6fc9a7c3"      
+BOT_TOKEN = "8049998572:AAFa833_DlivqwpGMbq4PvK0H1xhTDMYLYU" 
+ADMIN_ID = 942084825      
+CHANNEL_ID = -1003747593953  
 
-@flask_app.route('/')
-def index():
-    return "Bot is alive!", 200
+app = Client("file_share_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-def run_flask():
-    # Render port ko environment variable se leta hai
-    port = int(os.environ.get('PORT', 8080))
-    flask_app.run(host='0.0.0.0', port=port)
-# --- Web Server ka code yahan khatam ---
+# Database setup (Files yaad rakhne ke liye)
+db = sqlite3.connect("files_data.db", check_same_thread=False)
+cursor = db.cursor()
+cursor.execute("CREATE TABLE IF NOT EXISTS my_files (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, msg_id INTEGER)")
+db.commit()
 
+# 1. Admin File Upload Logic
+@app.on_message((filters.document | filters.video | filters.audio | filters.photo) & filters.user(ADMIN_ID))
+async def store_file(client, message):
+    sent_msg = await message.forward(chat_id=CHANNEL_ID)
+    
+    # File name nikalna
+    f_name = "Media File"
+    if message.document: f_name = message.document.file_name
+    elif message.video: f_name = "Video File"
+    
+    # DB mein save karein
+    cursor.execute("INSERT INTO my_files (name, msg_id) VALUES (?, ?)", (f_name, sent_msg.id))
+    db.commit()
 
-# --- Basic Logging ---
-logging.basicConfig(level=logging.INFO)
+    share_link = f"https://t.me/{app.me.username}?start={sent_msg.id}"
+    await message.reply_text(
+        f"✅ **Owner Sahab, Link Taiyar Hai!**\n\nFile: {f_name}\nLink: `{share_link}`",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Share Karein 🚀", url=f"https://telegram.me/share/url?url={share_link}")]])
+    )
 
-# --- Load Environment Variables ---
-load_dotenv()
+# 2. File List nikalne ka logic
+async def get_file_list():
+    cursor.execute("SELECT name, msg_id FROM my_files ORDER BY id DESC LIMIT 15")
+    rows = cursor.fetchall()
+    if not rows:
+        return "Owner Sahab, abhi koi file nahi hai."
+    
+    text = "📂 **Aapki Recent Files:**\n\n"
+    for name, m_id in rows:
+        link = f"https://t.me/{app.me.username}?start={m_id}"
+        text += f"📄 `{name}`\n🔗 `{link}`\n\n"
+    return text
 
-# --- Configuration ---
-API_ID = int(os.environ.get("API_ID"))
-API_HASH = os.environ.get("API_HASH")
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-MONGO_URI = os.environ.get("MONGO_URI")
-LOG_CHANNEL = int(os.environ.get("LOG_CHANNEL")) 
-UPDATE_CHANNEL = os.environ.get("UPDATE_CHANNEL") 
-
-# Admin configuration
-ADMIN_IDS_STR = os.environ.get("ADMIN_IDS", "")
-ADMINS = [int(admin_id.strip()) for admin_id in ADMIN_IDS_STR.split(',') if admin_id]
-
-# --- Database Setup ---
-try:
-    client = MongoClient(MONGO_URI)
-    db = client['file_link_bot']
-    files_collection = db['files']
-    settings_collection = db['settings']
-    logging.info("MongoDB Connected Successfully!")
-except Exception as e:
-    logging.error(f"Error connecting to MongoDB: {e}")
-    exit()
-
-# --- Pyrogram Client ---
-app = Client("FileLinkBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-
-# --- Helper Functions ---
-def generate_random_string(length=6):
-    return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
-
-async def is_user_member(client: Client, user_id: int) -> bool:
-    try:
-        await client.get_chat_member(chat_id=f"@{UPDATE_CHANNEL}", user_id=user_id)
-        return True
-    except UserNotParticipant:
-        return False
-    except Exception as e:
-        logging.error(f"Error checking membership for {user_id}: {e}")
-        return False
-
-async def get_bot_mode() -> str:
-    setting = settings_collection.find_one({"_id": "bot_mode"})
-    if setting:
-        return setting.get("mode", "public")
-    settings_collection.update_one({"_id": "bot_mode"}, {"$set": {"mode": "public"}}, upsert=True)
-    return "public"
-
-# --- Bot Command Handlers ---
-
+# 3. Start Command with Admin Button
 @app.on_message(filters.command("start") & filters.private)
-async def start_handler(client: Client, message: Message):
+async def start_command(client, message):
     if len(message.command) > 1:
-        file_id_str = message.command[1]
-        
-        if not await is_user_member(client, message.from_user.id):
-            join_button = InlineKeyboardButton("🔗 Join Channel", url=f"https://t.me/{UPDATE_CHANNEL}")
-            joined_button = InlineKeyboardButton("✅ I Have Joined", callback_data=f"check_join_{file_id_str}")
-            keyboard = InlineKeyboardMarkup([[join_button], [joined_button]])
-            
-            await message.reply(
-                f"👋 **Hello, {message.from_user.first_name}!**\n\nYe file access karne ke liye, aapko hamara update channel join karna hoga.",
-                reply_markup=keyboard
-            )
-            return
-
-        file_record = files_collection.find_one({"_id": file_id_str})
-        if file_record:
-            try:
-                await client.copy_message(chat_id=message.from_user.id, from_chat_id=LOG_CHANNEL, message_id=file_record['message_id'])
-            except Exception as e:
-                await message.reply(f"❌ Sorry, file bhejte waqt ek error aa gaya.\n`Error: {e}`")
-        else:
-            await message.reply("🤔 File not found! Ho sakta hai link galat ya expire ho gaya ho.")
+        msg_id = int(message.command[1])
+        try:
+            await client.copy_message(chat_id=message.chat.id, from_chat_id=CHANNEL_ID, message_id=msg_id)
+        except:
+            await message.reply_text("❌ File nahi mili!")
     else:
-        await message.reply("**Hello! Mai ek File-to-Link bot hu.**\n\nMujhe koi bhi file bhejo, aur mai aapko uska ek shareable link dunga.")
+        buttons = []
+        if message.from_user.id == ADMIN_ID:
+            buttons.append([InlineKeyboardButton("📂 My Files List", callback_data="show_list")])
+        
+        await message.reply_text(
+            f"Hello {message.from_user.mention}!\nMain aapka Private File Share Bot hoon.",
+            reply_markup=InlineKeyboardMarkup(buttons) if buttons else None
+        )
 
+# Button click handle karna
+@app.on_callback_query(filters.regex("show_list"))
+async def cb_handler(client, query):
+    file_list_text = await get_file_list()
+    await query.message.edit_text(file_list_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="back_start")]]))
+
+@app.on_callback_query(filters.regex("back_start"))
+async def back_handler(client, query):
+    await start_command(client, query.message)
+
+print("⚡ Bot List Button ke saath Start ho gaya hai!")
+app.run()
 @app.on_message(filters.private & (filters.document | filters.video | filters.photo | filters.audio))
 async def file_handler(client: Client, message: Message):
     bot_mode = await get_bot_mode()

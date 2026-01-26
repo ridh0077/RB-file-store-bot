@@ -7,8 +7,8 @@ from pyrogram import Client, filters, enums
 from pyrogram.errors import UserNotParticipant
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery
 from pymongo import MongoClient
-from flask import Flask # <-- Yahan add kiya hai
-from threading import Thread # <-- Yahan add kiya hai
+from flask import Flask 
+from threading import Thread 
 
 # --- Flask Web Server (Render ko busy rakhne ke liye) ---
 flask_app = Flask(__name__)
@@ -18,11 +18,8 @@ def index():
     return "Bot is alive!", 200
 
 def run_flask():
-    # Render port ko environment variable se leta hai
     port = int(os.environ.get('PORT', 8080))
     flask_app.run(host='0.0.0.0', port=port)
-# --- Web Server ka code yahan khatam ---
-
 
 # --- Basic Logging ---
 logging.basicConfig(level=logging.INFO)
@@ -70,13 +67,6 @@ async def is_user_member(client: Client, user_id: int) -> bool:
         logging.error(f"Error checking membership for {user_id}: {e}")
         return False
 
-async def get_bot_mode() -> str:
-    setting = settings_collection.find_one({"_id": "bot_mode"})
-    if setting:
-        return setting.get("mode", "public")
-    settings_collection.update_one({"_id": "bot_mode"}, {"$set": {"mode": "public"}}, upsert=True)
-    return "public"
-
 # --- Bot Command Handlers ---
 
 @app.on_message(filters.command("start") & filters.private)
@@ -106,7 +96,69 @@ async def start_handler(client: Client, message: Message):
     else:
         await message.reply("**Hello! Mai ek File-to-Link bot hu.**\n\nMujhe koi bhi file bhejo, aur mai aapko uska ek shareable link dunga.")
 
-@app.on_message(filters.private & (filters.document | filters.video | filters.photo | filters.audio))
+# --- Link Generation (Admin Only Restricted) ---
+@app.on_message(filters.private & (filters.document | filters.video | filters.audio | filters.photo))
+async def handle_media(client: Client, message: Message):
+    # Admin Restriction Check
+    if message.from_user.id not in ADMINS:
+        await message.reply("❌ **Access Denied!**\n\nSirf Admins hi files bhej kar links generate kar sakte hain. Aap sirf links open kar sakte hain.")
+        return
+
+    # Processing only for Admins
+    processing_msg = await message.reply("⏳ **Processing... Please wait.**")
+    
+    try:
+        # File ko Log Channel mein forward karna
+        log_msg = await message.copy(chat_id=LOG_CHANNEL)
+        
+        # Unique ID generate karna
+        file_id_str = generate_random_string(8)
+        
+        # Database mein save karna
+        files_collection.insert_one({
+            "_id": file_id_str,
+            "message_id": log_msg.id,
+            "sender_id": message.from_user.id
+        })
+        
+        # Link generate karna
+        bot_username = (await client.get_me()).username
+        file_link = f"https://t.me/{bot_username}?start={file_id_str}"
+        
+        await processing_msg.edit(
+            f"✅ **File Stored Successfully!**\n\n**Link:** `{file_link}`",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Share Link", url=f"https://t.me/share/url?url={file_link}")]])
+        )
+        
+    except Exception as e:
+        logging.error(f"Error handling media: {e}")
+        await processing_msg.edit(f"❌ Ek error aaya: {e}")
+
+# --- Callback Query Handler (For Joined Button) ---
+@app.on_callback_query(filters.regex(r"^check_join_"))
+async def check_join_callback(client: Client, callback_query: CallbackQuery):
+    file_id_str = callback_query.data.split("_")[-1]
+    user_id = callback_query.from_user.id
+    
+    if await is_user_member(client, user_id):
+        await callback_query.message.delete()
+        file_record = files_collection.find_one({"_id": file_id_str})
+        if file_record:
+            await client.copy_message(chat_id=user_id, from_chat_id=LOG_CHANNEL, message_id=file_record['message_id'])
+        else:
+            await client.send_message(user_id, "🤔 File not found!")
+    else:
+        await callback_query.answer("⚠️ Aapne abhi tak channel join nahi kiya hai!", show_alert=True)
+
+# --- Start Bot and Web Server ---
+if __name__ == "__main__":
+    # Flask ko thread mein chalana
+    Thread(target=run_flask).start()
+    logging.info("Flask server started.")
+    
+    # Bot start karna
+    logging.info("Bot is starting...")
+    app.run()@app.on_message(filters.private & (filters.document | filters.video | filters.photo | filters.audio))
 async def file_handler(client: Client, message: Message):
     bot_mode = await get_bot_mode()
     if bot_mode == "private" and message.from_user.id not in ADMINS:

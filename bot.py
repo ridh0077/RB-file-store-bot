@@ -10,7 +10,7 @@ from pymongo import MongoClient
 from flask import Flask 
 from threading import Thread 
 
-# --- Flask Web Server (Render ko busy rakhne ke liye) ---
+# --- Flask Web Server ---
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
@@ -35,7 +35,6 @@ MONGO_URI = os.environ.get("MONGO_URI")
 LOG_CHANNEL = int(os.environ.get("LOG_CHANNEL")) 
 UPDATE_CHANNEL = os.environ.get("UPDATE_CHANNEL") 
 
-# Admin configuration
 ADMIN_IDS_STR = os.environ.get("ADMIN_IDS", "")
 ADMINS = [int(admin_id.strip()) for admin_id in ADMIN_IDS_STR.split(',') if admin_id]
 
@@ -96,42 +95,82 @@ async def start_handler(client: Client, message: Message):
     else:
         await message.reply("**Hello! Mai ek File-to-Link bot hu.**\n\nMujhe koi bhi file bhejo, aur mai aapko uska ek shareable link dunga.")
 
-# --- Link Generation (Admin Only Restricted) ---
+# --- Link Generation (Admin Only with File Name) ---
 @app.on_message(filters.private & (filters.document | filters.video | filters.audio | filters.photo))
 async def handle_media(client: Client, message: Message):
-    # Admin Restriction Check
+    # Admin Protection
     if message.from_user.id not in ADMINS:
-        await message.reply("❌ **Access Denied!**\n\nSirf Admins hi files bhej kar links generate kar sakte hain. Aap sirf links open kar sakte hain.")
+        await message.reply("❌ **Access Denied!**\n\nSirf Admins hi files bhej sakte hain.")
         return
 
-    # Processing only for Admins
+    # File Name nikalna
+    file_name = "Media File"
+    if message.document:
+        file_name = message.document.file_name
+    elif message.video:
+        file_name = message.video.file_name or "Video"
+    elif message.audio:
+        file_name = message.audio.file_name or message.audio.title or "Audio"
+    elif message.photo:
+        file_name = "Photo"
+
     processing_msg = await message.reply("⏳ **Processing... Please wait.**")
     
     try:
-        # File ko Log Channel mein forward karna
+        # File copy to log channel
         log_msg = await message.copy(chat_id=LOG_CHANNEL)
         
-        # Unique ID generate karna
         file_id_str = generate_random_string(8)
         
-        # Database mein save karna
         files_collection.insert_one({
             "_id": file_id_str,
             "message_id": log_msg.id,
             "sender_id": message.from_user.id
         })
         
-        # Link generate karna
         bot_username = (await client.get_me()).username
         file_link = f"https://t.me/{bot_username}?start={file_id_str}"
         
+        # Format as per your screenshot
+        response_text = (
+            f"╰‿╯  R i d h\n"
+            f"**{file_name}**\n\n"
+            f"✅ **Link Generated Successfully!**\n\n"
+            f"🔗 **Your Link:** `{file_link}`"
+        )
+        
         await processing_msg.edit(
-            f"✅ **File Stored Successfully!**\n\n**Link:** `{file_link}`",
+            response_text,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Share Link", url=f"https://t.me/share/url?url={file_link}")]])
         )
         
     except Exception as e:
-        logging.error(f"Error handling media: {e}")
+        logging.error(f"Error: {e}")
+        # Error message as per your screenshot format
+        await processing_msg.edit(
+            f"❌ **Error!**\n\nKuch galat ho gaya. Please try again.\nDetails: `{e}`"
+        )
+
+# --- Callback Query Handler ---
+@app.on_callback_query(filters.regex(r"^check_join_"))
+async def check_join_callback(client: Client, callback_query: CallbackQuery):
+    file_id_str = callback_query.data.split("_")[-1]
+    user_id = callback_query.from_user.id
+    
+    if await is_user_member(client, user_id):
+        await callback_query.message.delete()
+        file_record = files_collection.find_one({"_id": file_id_str})
+        if file_record:
+            await client.copy_message(chat_id=user_id, from_chat_id=LOG_CHANNEL, message_id=file_record['message_id'])
+        else:
+            await client.send_message(user_id, "🤔 File not found!")
+    else:
+        await callback_query.answer("⚠️ Aapne abhi tak channel join nahi kiya hai!", show_alert=True)
+
+# --- Start ---
+if __name__ == "__main__":
+    Thread(target=run_flask).start()
+    app.run()        logging.error(f"Error handling media: {e}")
         await processing_msg.edit(f"❌ Ek error aaya: {e}")
 
 # --- Callback Query Handler (For Joined Button) ---

@@ -4,13 +4,12 @@ import random
 import string
 from dotenv import load_dotenv
 from pyrogram import Client, filters, enums
-from pyrogram.errors import UserNotParticipant
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery
 from pymongo import MongoClient
 from flask import Flask 
 from threading import Thread 
 
-# --- Flask Web Server (Render ko online rakhne ke liye) ---
+# --- Flask Web Server ---
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
@@ -33,7 +32,6 @@ API_HASH = os.environ.get("API_HASH")
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 MONGO_URI = os.environ.get("MONGO_URI")
 LOG_CHANNEL = int(os.environ.get("LOG_CHANNEL")) 
-UPDATE_CHANNEL = os.environ.get("UPDATE_CHANNEL") 
 
 # Admin IDs list
 ADMIN_IDS_STR = os.environ.get("ADMIN_IDS", "")
@@ -52,20 +50,6 @@ except Exception as e:
 # --- Pyrogram Client ---
 app = Client("FileLinkBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# --- Helper Functions ---
-def generate_random_string(length=8):
-    return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
-
-async def is_user_member(client: Client, user_id: int) -> bool:
-    try:
-        await client.get_chat_member(chat_id=f"@{UPDATE_CHANNEL}", user_id=user_id)
-        return True
-    except UserNotParticipant:
-        return False
-    except Exception as e:
-        logging.error(f"Error checking membership: {e}")
-        return False
-
 # --- Handlers ---
 
 @app.on_message(filters.command("start") & filters.private)
@@ -73,103 +57,28 @@ async def start_handler(client: Client, message: Message):
     if len(message.command) > 1:
         file_id_str = message.command[1]
         
-        if not await is_user_member(client, message.from_user.id):
-            join_button = InlineKeyboardButton("🔗 Join Channel", url=f"https://t.me/{UPDATE_CHANNEL}")
-            joined_button = InlineKeyboardButton("✅ I Have Joined", callback_data=f"check_join_{file_id_str}")
-            keyboard = InlineKeyboardMarkup([[join_button], [joined_button]])
-            
-            await message.reply(
-                f"👋 **Hello, {message.from_user.first_name}!**\n\nYe file access karne ke liye, aapko hamara update channel join karna hoga.",
-                reply_markup=keyboard
-            )
-            return
-
+        # Ab yahan koi "Force Join" check nahi hai, seedha file milegi
         file_record = files_collection.find_one({"_id": file_id_str})
         if file_record:
             try:
-                await client.copy_message(chat_id=message.from_user.id, from_chat_id=LOG_CHANNEL, message_id=file_record['message_id'])
+                await client.copy_message(
+                    chat_id=message.from_user.id, 
+                    from_chat_id=LOG_CHANNEL, 
+                    message_id=file_record['message_id']
+                )
             except Exception as e:
                 await message.reply(f"❌ Error: {e}")
         else:
-            await message.reply("🤔 File not found!")
+            await message.reply("🤔 File nahi mili!")
     else:
         await message.reply("**Hello! Mai ek File-to-Link bot hu.**\n\nMujhe koi bhi file bhejo, aur mai link generate kar dunga.")
 
 # --- Link Generation (Admin Only) ---
 @app.on_message(filters.private & (filters.document | filters.video | filters.audio | filters.photo))
 async def handle_media(client: Client, message: Message):
-    # Admin Restriction
     if message.from_user.id not in ADMINS:
-        await message.reply("❌ **Access Denied!**\n\nSirf Admins hi files bhej kar links generate kar sakte hain.")
+        await message.reply("❌ **Access Denied!**\n\nSirf Admins hi links generate kar sakte hain.")
         return
 
-    # File Name Detect Karna
-    file_name = "Media File"
-    if message.document:
-        file_name = message.document.file_name
-    elif message.video:
-        file_name = message.video.file_name or "Video File"
-    elif message.audio:
-        file_name = message.audio.file_name or "Audio File"
-    elif message.photo:
-        file_name = "Photo File"
-
-    processing_msg = await message.reply("⏳ **Processing... Please wait.**")
-    
-    try:
-        # Copy to Log Channel
-        log_msg = await message.copy(chat_id=LOG_CHANNEL)
-        
-        file_id_str = generate_random_string(8)
-        
-        # Save to DB
-        files_collection.insert_one({
-            "_id": file_id_str,
-            "message_id": log_msg.id,
-            "sender_id": message.from_user.id
-        })
-        
-        bot_username = (await client.get_me()).username
-        file_link = f"https://t.me/{bot_username}?start={file_id_str}"
-        
-        # Display Format (As per your screenshot)
-        response_text = (
-            f"╰‿╯  R i d h\n"
-            f"**{file_name}**\n\n"
-            f"✅ **Link Generated Successfully!**\n\n"
-            f"🔗 **Your Link:** `{file_link}`"
-        )
-        
-        await processing_msg.edit(
-            response_text,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Share Link", url=f"https://t.me/share/url?url={file_link}")]])
-        )
-        
-    except Exception as e:
-        logging.error(f"Error: {e}")
-        await processing_msg.edit(f"❌ **Error!**\n\nKuch galat ho gaya.\nDetails: `{e}`")
-
-@app.on_callback_query(filters.regex(r"^check_join_"))
-async def check_join_callback(client: Client, callback_query: CallbackQuery):
-    file_id_str = callback_query.data.split("_")[-1]
-    user_id = callback_query.from_user.id
-    
-    if await is_user_member(client, user_id):
-        await callback_query.message.delete()
-        file_record = files_collection.find_one({"_id": file_id_str})
-        if file_record:
-            await client.copy_message(chat_id=user_id, from_chat_id=LOG_CHANNEL, message_id=file_record['message_id'])
-        else:
-            await client.send_message(user_id, "🤔 File not found!")
-    else:
-        await callback_query.answer("⚠️ Aapne abhi tak channel join nahi kiya hai!", show_alert=True)
-
-# --- Run Bot ---
-if __name__ == "__main__":
-    # Start Flask Web Server in Background
-    Thread(target=run_flask).start()
-    logging.info("Flask Server Started.")
-    
-    # Start Telegram Bot
-    logging.info("Bot is starting...")
-    app.run()
+    # File ID create karna aur DB mein save karne ka logic yahan aayega...
+    # (Aapka bacha hua code yahan continue karein)

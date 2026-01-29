@@ -5,76 +5,66 @@ from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
 
-# --- RENDER KEEP ALIVE LOGIC (Isse error nahi aayega) ---
+# --- RENDER KEEP ALIVE (Server setup) ---
 app = Flask('')
-
 @app.route('/')
 def home():
-    return "Bot is Alive and Running!"
+    return "RBmods Bot is Active!"
 
 def run_flask():
-    # Render default port 8080 use karta hai
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
 
 def keep_alive():
     t = threading.Thread(target=run_flask)
     t.start()
-# -------------------------------------------------------
+# ----------------------------------------
 
-# Load variables
 load_dotenv()
 
-# Variables (Render Environment Variables se uthayega)
+# Basic Variables
 API_ID = int(os.environ.get("API_ID", 0))
 API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", 0))
-LOG_CHANNEL = int(os.environ.get("LOG_CHANNEL", -100)) 
 
-bot = Client("RBFileStore", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+bot = Client("RBFileBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# --- EDITABLE CONFIGURATION (Yaha se change kar sakte hain) ---
-WELCOME_TEXT = "Hello {name}!\n\nWelcome to my **RBmods channel**.\n\nMain ek file store bot hu. Sirf Admin hi files bhej sakta hai."
-BUTTONS = InlineKeyboardMarkup([
-    [InlineKeyboardButton("Join RBmods 📢", url="https://t.me/your_channel_link")],
-    [InlineKeyboardButton("Support 💬", url="https://t.me/your_username")]
+# --- AAP ISE EDIT KAR SAKTE HAIN ---
+WELCOME_MSG = "Hello {name}!\n\nWelcome to my **RBmods channel**.\n\nAapka swagat hai hamare bot mein!"
+START_BUTTONS = InlineKeyboardMarkup([
+    [InlineKeyboardButton("Join RBmods 📢", url="https://t.me/RBmods")],
+    [InlineKeyboardButton("Owner 👤", url="https://t.me/your_username")]
 ])
-# -------------------------------------------------------------
+# ----------------------------------
 
-# 1. Start Command
+# 1. Start Command (Sabke liye)
 @bot.on_message(filters.command("start") & filters.private)
-async def start(client, message):
+async def start_handler(client, message):
+    name = message.from_user.first_name
     await message.reply_text(
-        text=WELCOME_TEXT.format(name=message.from_user.first_name),
-        reply_markup=BUTTONS
+        text=WELCOME_MSG.format(name=name),
+        reply_markup=START_BUTTONS
     )
 
-# 2. File Forwarding (Sirf Admin ke liye)
+# 2. Files handling (Sirf Admin ke liye - Bina Log Channel ke)
 @bot.on_message(filters.private & (filters.document | filters.video | filters.photo | filters.audio))
-async def handle_files(client, message):
-    # Security: Check if user is Admin
+async def file_handler(client, message):
     if message.from_user.id != ADMIN_ID:
-        await message.reply_text("❌ Aap admin nahi hain! Sirf admin hi yaha files bhej sakta hai.")
+        await message.reply_text("❌ Sirf Admin hi yaha file bhej sakta hai.")
         return
+    
+    # Ab bot sirf file receive karega, log channel ka error nahi aayega
+    await message.reply_text("✅ Admin, file receive ho gayi hai! Ab aap ise kahin bhi forward kar sakte hain.")
 
-    # Agar Admin hai toh Log Channel me forward karega
-    try:
-        await message.forward(LOG_CHANNEL)
-        await message.reply_text("✅ File successfully saved in Log Channel!")
-    except Exception as e:
-        await message.reply_text(f"❌ Error: Log Channel check karein. {e}")
-
-# 3. Text Message Restriction (Koi aur message na kar paye)
+# 3. Message Handling (Security Check)
 @bot.on_message(filters.private & filters.text & ~filters.command("start"))
-async def restrict_chat(client, message):
+async def text_handler(client, message):
     if message.from_user.id != ADMIN_ID:
-        await message.reply_text("⚠️ Sorry! Sirf Admin hi is bot se baat kar sakta hai.")
+        await message.reply_text("⚠️ Ye bot sirf Admin ke use ke liye hai.")
     else:
-        await message.reply_text("Hello Admin! Main aapke commands ka wait kar raha hoon.")
+        await message.reply_text(f"Hello Admin, aapne kaha: {message.text}")
 
-# Bot Start karne ka tarika
 if __name__ == "__main__":
-    print("Starting Web Server...")
-    keep_alive()  # Isse Render ka 'No Open Ports' error fix ho jayega
-    print("Bot is running...")
+    keep_alive()
+    print("Bot is starting without Log Channel...")
     bot.run()

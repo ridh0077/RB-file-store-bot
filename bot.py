@@ -3,52 +3,52 @@ from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
 
-# Load variables from .env file
+# Load variables
 load_dotenv()
 
-API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
+# Variables with safe defaults to avoid 'NoneType' error
+API_ID = int(os.environ.get("API_ID", 0))
+API_HASH = os.environ.get("API_HASH", "")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+ADMIN_ID = int(os.environ.get("ADMIN_ID", 0))
+# Yaha error fix kiya gaya hai (default -100 diya hai taaki crash na ho)
+LOG_CHANNEL = int(os.environ.get("LOG_CHANNEL", -100)) 
 
-bot = Client("my_file_store_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+bot = Client("RBFileStore", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# --- EDITABLE MESSAGES ---
-WELCOME_TEXT = "Hello {name}!\n\nWelcome to my **RBmods channel** bot. Aapka swagat hai!"
-START_BUTTONS = InlineKeyboardMarkup([
-    [InlineKeyboardButton("Join Channel 📢", url="https://t.me/your_channel_link")],
-    [InlineKeyboardButton("Support 💬", url="https://t.me/your_username")]
+# --- CONFIGURATION ---
+WELCOME_TEXT = "Hello {name}!\n\nWelcome to my **RBmods channel**.\n\nMain ek file store bot hu. Sirf Admin hi files bhej sakta hai."
+JOIN_BUTTON = InlineKeyboardMarkup([
+    [InlineKeyboardButton("Join RBmods 📢", url="https://t.me/your_channel_link")]
 ])
-# -------------------------
 
 # Start Command
 @bot.on_message(filters.command("start") & filters.private)
-async def start_handler(client, message):
-    name = message.from_user.first_name
+async def start(client, message):
     await message.reply_text(
-        text=WELCOME_TEXT.format(name=name),
-        reply_markup=START_BUTTONS
+        text=WELCOME_TEXT.format(name=message.from_user.first_name),
+        reply_markup=JOIN_BUTTON
     )
 
-# File Forwarding Logic (Only for Admin)
-@bot.on_message(filters.private & (filters.document | filters.video | filters.audio | filters.photo))
-async def forward_handler(client, message):
-    # Security Check: Sirf Admin hi file bhej sakta hai
+# File Forwarding (Strictly Admin Only)
+@bot.on_message(filters.private & (filters.document | filters.video | filters.photo))
+async def handle_files(client, message):
     if message.from_user.id != ADMIN_ID:
-        await message.reply_text("❌ Sorry! Aap is bot ke admin nahi hain. Aap messages forward nahi kar sakte.")
+        await message.reply_text("❌ Aap admin nahi hain! Sirf @your_username hi files bhej sakta hai.")
         return
 
-    # Admin ke liye file handling
-    await message.reply_text("✅ File Received! Ab aap isse forward kar sakte hain ya link generate kar sakte hain.")
-    # Agar aapko file store karni hai toh yaha channel forwarding ka code add ho sakta hai.
+    # Forwarding to Log Channel
+    try:
+        await message.forward(LOG_CHANNEL)
+        await message.reply_text("✅ File successfully saved in Log Channel!")
+    except Exception as e:
+        await message.reply_text(f"❌ Error: Log Channel setup nahi hai sahi se. {e}")
 
-# Chat Restriction (Taaki koi aur message na kare)
+# Restrict normal text messages for others
 @bot.on_message(filters.private & filters.text & ~filters.command("start"))
-async def restricted_handler(client, message):
+async def restrict_chat(client, message):
     if message.from_user.id != ADMIN_ID:
-        await message.reply_text("⚠️ Sirf Admin hi yaha message kar sakta hai.")
-    else:
-        await message.reply_text("Hello Admin! Main aapke order ka wait kar raha hu.")
+        await message.reply_text("⚠️ Ye bot sirf Admin ke liye hai.")
 
-print("Bot is starting...")
+print("Bot is running...")
 bot.run()

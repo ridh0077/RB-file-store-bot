@@ -5,66 +5,63 @@ from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
 
-# --- RENDER KEEP ALIVE (Server setup) ---
+# --- RENDER KEEP ALIVE SERVER ---
 app = Flask('')
 @app.route('/')
-def home():
-    return "RBmods Bot is Active!"
-
-def run_flask():
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
-
-def keep_alive():
-    t = threading.Thread(target=run_flask)
-    t.start()
-# ----------------------------------------
+def home(): return "RBmods File Store is Online!"
+def run_flask(): app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
+def keep_alive(): threading.Thread(target=run_flask).start()
 
 load_dotenv()
 
-# Basic Variables
+# Variables (Render se fetch honge)
 API_ID = int(os.environ.get("API_ID", 0))
 API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", 0))
+LOG_CHANNEL = int(os.environ.get("LOG_CHANNEL", 0))
 
-bot = Client("RBFileBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+bot = Client("RBFileStore", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# --- AAP ISE EDIT KAR SAKTE HAIN ---
-WELCOME_MSG = "Hello {name}!\n\nWelcome to my **RBmods channel**.\n\nAapka swagat hai hamare bot mein!"
-START_BUTTONS = InlineKeyboardMarkup([
-    [InlineKeyboardButton("Join RBmods 📢", url="https://t.me/RBmods")],
-    [InlineKeyboardButton("Owner 👤", url="https://t.me/your_username")]
-])
-# ----------------------------------
-
-# 1. Start Command (Sabke liye)
+# 1. Start Command (Link handling + Welcome)
 @bot.on_message(filters.command("start") & filters.private)
-async def start_handler(client, message):
-    name = message.from_user.first_name
-    await message.reply_text(
-        text=WELCOME_MSG.format(name=name),
-        reply_markup=START_BUTTONS
+async def start_handler(c, m):
+    # Agar kisi ne link par click kiya hai (Example: /start 123)
+    if len(m.command) > 1:
+        file_id = m.command[1]
+        try:
+            await c.copy_message(chat_id=m.from_user.id, from_chat_id=LOG_CHANNEL, message_id=int(file_id))
+        except Exception as e:
+            await m.reply_text("❌ Error: File nahi mili ya link purana hai.")
+        return
+
+    # Normal Welcome Message
+    name = m.from_user.first_name
+    await m.reply_text(
+        text=f"Hello {name}!\n\nWelcome to **RBmods channel**.\n\nMain aapko files ka link bana kar de sakta hoon. Sirf Admin hi link bana sakta hai.",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Join Channel 📢", url="https://t.me/RBmods")]])
     )
 
-# 2. Files handling (Sirf Admin ke liye - Bina Log Channel ke)
+# 2. File to Link Generator (Sirf Admin bhej sakta hai)
 @bot.on_message(filters.private & (filters.document | filters.video | filters.photo | filters.audio))
-async def file_handler(client, message):
-    if message.from_user.id != ADMIN_ID:
-        await message.reply_text("❌ Sirf Admin hi yaha file bhej sakta hai.")
-        return
-    
-    # Ab bot sirf file receive karega, log channel ka error nahi aayega
-    await message.reply_text("✅ Admin, file receive ho gayi hai! Ab aap ise kahin bhi forward kar sakte hain.")
+async def gen_link(c, m):
+    if m.from_user.id != ADMIN_ID:
+        return # Do nothing for non-admins to avoid spam
 
-# 3. Message Handling (Security Check)
-@bot.on_message(filters.private & filters.text & ~filters.command("start"))
-async def text_handler(client, message):
-    if message.from_user.id != ADMIN_ID:
-        await message.reply_text("⚠️ Ye bot sirf Admin ke use ke liye hai.")
-    else:
-        await message.reply_text(f"Hello Admin, aapne kaha: {message.text}")
+    # File ko Log Channel mein bhej raha hai
+    try:
+        log_msg = await m.copy(LOG_CHANNEL)
+        bot_info = await c.get_me()
+        share_link = f"https://t.me/{bot_info.username}?start={log_msg.id}"
+        
+        await m.reply_text(
+            f"✅ **Aapka File Link Taiyar Hai:**\n\n`{share_link}`",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Share Link 🔗", url=f"https://t.me/share/url?url={share_link}")]])
+        )
+    except Exception as e:
+        await m.reply_text(f"❌ Error: Kya aapne bot ko channel mein admin banaya hai? \n\nDetails: {e}")
 
 if __name__ == "__main__":
     keep_alive()
-    print("Bot is starting without Log Channel...")
+    print("Bot is starting...")
     bot.run()

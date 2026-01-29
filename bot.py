@@ -33,7 +33,7 @@ bot = Client("RBFileStore", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKE
 
 # Settings for messages
 WELCOME_TEXT = "Hello {name}!\n\nWelcome to my **RBmods channel** bot. Aapka swagat hai!\n\nMain aapki files ka link bana kar de sakta hoon."
-JOIN_BUTTON = InlineKeyboardMarkup([[InlineKeyboardButton("Join RBmods 📢", url="https://t.me/RBmods")]])
+JOIN_BUTTON = InlineKeyboardMarkup([[InlineKeyboardButton("Join RBmods 📢", url="https://t.me/rbmodschats")]])
 
 # Global variable to store bot username to avoid flood waits
 BOT_UNAME = None
